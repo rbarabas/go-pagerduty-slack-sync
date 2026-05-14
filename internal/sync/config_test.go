@@ -210,6 +210,21 @@ func Test_NewConfigFromEnv_InvalidSlackGroupTemplate(t *testing.T) {
 	assert.Contains(t, err.Error(), slackCurrentGroupTemplateKey)
 }
 
+func Test_NewConfigFromEnv_SlackTemplatesStripOuterQuotes(t *testing.T) {
+	defer SetEnv("PAGERDUTY_TOKEN", "token1")()
+	defer SetEnv("SLACK_TOKEN", "secretToken1")()
+	defer SetEnv("SCHEDULE_US", "PJMC036,us")()
+	defer SetEnv("SLACK_CURRENT_GROUP_TEMPLATE", "'{{.Slug}}-oncall'")()
+	defer SetEnv("SLACK_ALL_GROUP_TEMPLATE", "'{{.Slug}}-oncall-all'")()
+
+	config, err := NewConfigFromEnv()
+
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(config.Schedules))
+	assert.Equal(t, "us-oncall", config.Schedules[0].CurrentOnCallGroupName)
+	assert.Equal(t, "us-oncall-all", config.Schedules[0].AllOnCallGroupName)
+}
+
 func Test_NewConfigFromEnv_EmptyScheduleSlug(t *testing.T) {
 	defer SetEnv("PAGERDUTY_TOKEN", "token1")()
 	defer SetEnv("SLACK_TOKEN", "secretToken1")()

@@ -125,10 +125,12 @@ type groupNameTemplateData struct {
 
 func loadGroupNameTemplates() (current *template.Template, all *template.Template, err error) {
 	currentStr := strings.TrimSpace(os.Getenv(slackCurrentGroupTemplateKey))
+	currentStr = strings.Trim(currentStr, `'"`)
 	if currentStr == "" {
 		currentStr = defaultCurrentGroupTemplate
 	}
 	allStr := strings.TrimSpace(os.Getenv(slackAllGroupTemplateKey))
+	allStr = strings.Trim(allStr, `'"`)
 	if allStr == "" {
 		allStr = defaultAllGroupTemplate
 	}
@@ -150,6 +152,7 @@ func renderGroupName(t *template.Template, slug string) (string, error) {
 		return "", err
 	}
 	out := strings.TrimSpace(buf.String())
+	out = strings.Trim(out, `'"`)
 	if out == "" {
 		return "", fmt.Errorf("rendered empty Slack group name for slug %q", slug)
 	}
