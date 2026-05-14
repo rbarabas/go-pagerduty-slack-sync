@@ -1,10 +1,12 @@
 package sync
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 )
 
@@ -15,6 +17,13 @@ const (
 	runInterval            = "RUN_INTERVAL_SECONDS"
 	pdScheduleLookaheadKey = "PAGERDUTY_SCHEDULE_LOOKAHEAD"
 	runIntervalDefault     = 60
+
+	slackCurrentGroupTemplateKey  = "SLACK_CURRENT_GROUP_TEMPLATE"
+	slackAllGroupTemplateKey      = "SLACK_ALL_GROUP_TEMPLATE"
+	slackAggregateCurrentGroupKey = "SLACK_AGGREGATE_CURRENT_GROUP"
+
+	defaultCurrentGroupTemplate = `current-oncall-{{.Slug}}`
+	defaultAllGroupTemplate     = `all-oncall-{{.Slug}}s`
 )
 
 // Config is used to configure application
@@ -26,6 +35,9 @@ type Config struct {
 	SlackToken                 string
 	RunIntervalInSeconds       int
 	PagerdutyScheduleLookahead time.Duration
+	// AggregateCurrentSlackGroup, if non-empty, is an extra Slack user group
+	// updated with the union of all schedules' current on-call members.
+	AggregateCurrentSlackGroup string
 }
 
 // Schedule models a PagerDuty schedule that will be synced with Slack
@@ -41,13 +53,20 @@ type Schedule struct {
 // NewConfigFromEnv is a function to generate a config from env varibles
 // PAGERDUTY_TOKEN - PagerDuty Token
 // SLACK_TOKEN - Slack Token
-// SCHEDULE_XXX="id,name" e.g. 1234,platform-engineer will generate a schedule with the following values
-// ScheduleID = "1234", AllOnCallGroupName = "all-oncall-platform-engineers", CurrentOnCallGroupName: "current-oncall-platform-engineer"
+// SCHEDULE_XXX="id,slug" e.g. 1234,platform-engineer supplies Slug to the Slack group name templates.
+//
+// SLACK_CURRENT_GROUP_TEMPLATE and SLACK_ALL_GROUP_TEMPLATE are Go text/template strings
+// with {{.Slug}} available. Defaults match the historical naming:
+// current-oncall-{{.Slug}} and all-oncall-{{.Slug}}s.
+//
+// SLACK_AGGREGATE_CURRENT_GROUP, when set, names an additional Slack user group filled with
+// the union of every schedule's current on-call at sync time (e.g. oncall for @oncall).
 func NewConfigFromEnv() (*Config, error) {
 	config := &Config{
-		PagerDutyToken:       os.Getenv(pagerDutyTokenKey),
-		SlackToken:           os.Getenv(slackTokenKey),
-		RunIntervalInSeconds: runIntervalDefault,
+		PagerDutyToken:             os.Getenv(pagerDutyTokenKey),
+		SlackToken:                 os.Getenv(slackTokenKey),
+		RunIntervalInSeconds:       runIntervalDefault,
+		AggregateCurrentSlackGroup: strings.TrimSpace(os.Getenv(slackAggregateCurrentGroupKey)),
 	}
 
 	runInterval := os.Getenv(runInterval)
@@ -62,6 +81,11 @@ func NewConfigFromEnv() (*Config, error) {
 	}
 	config.PagerdutyScheduleLookahead = pagerdutyScheduleLookahead
 
+	currentTpl, allTpl, err := loadGroupNameTemplates()
+	if err != nil {
+		return nil, err
+	}
+
 	for _, key := range os.Environ() {
 		if strings.HasPrefix(key, scheduleKeyPrefix) {
 			value := strings.Split(key, "=")[1]
@@ -70,7 +94,21 @@ func NewConfigFromEnv() (*Config, error) {
 				return nil, fmt.Errorf("expecting schedule value to be a comma separated scheduleId,name but got %s", value)
 			}
 
-			config.Schedules = appendSchedule(config.Schedules, scheduleValues[0], scheduleValues[1])
+			slug := strings.TrimSpace(scheduleValues[1])
+			if slug == "" {
+				return nil, fmt.Errorf("schedule slug must not be empty in %s", value)
+			}
+
+			currentGroupName, err := renderGroupName(currentTpl, slug)
+			if err != nil {
+				return nil, fmt.Errorf("schedule %s: %w", value, err)
+			}
+			allGroupName, err := renderGroupName(allTpl, slug)
+			if err != nil {
+				return nil, fmt.Errorf("schedule %s: %w", value, err)
+			}
+
+			config.Schedules = appendSchedule(config.Schedules, strings.TrimSpace(scheduleValues[0]), currentGroupName, allGroupName)
 		}
 	}
 
@@ -81,9 +119,44 @@ func NewConfigFromEnv() (*Config, error) {
 	return config, nil
 }
 
-func appendSchedule(schedules []Schedule, scheduleID, teamName string) []Schedule {
-	currentGroupName := fmt.Sprintf("current-oncall-%s", teamName)
-	allGroupName := fmt.Sprintf("all-oncall-%ss", teamName)
+type groupNameTemplateData struct {
+	Slug string
+}
+
+func loadGroupNameTemplates() (current *template.Template, all *template.Template, err error) {
+	currentStr := strings.TrimSpace(os.Getenv(slackCurrentGroupTemplateKey))
+	if currentStr == "" {
+		currentStr = defaultCurrentGroupTemplate
+	}
+	allStr := strings.TrimSpace(os.Getenv(slackAllGroupTemplateKey))
+	if allStr == "" {
+		allStr = defaultAllGroupTemplate
+	}
+
+	current, err = template.New("slack-current-group").Parse(currentStr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse %s: %w", slackCurrentGroupTemplateKey, err)
+	}
+	all, err = template.New("slack-all-group").Parse(allStr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse %s: %w", slackAllGroupTemplateKey, err)
+	}
+	return current, all, nil
+}
+
+func renderGroupName(t *template.Template, slug string) (string, error) {
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, groupNameTemplateData{Slug: slug}); err != nil {
+		return "", err
+	}
+	out := strings.TrimSpace(buf.String())
+	if out == "" {
+		return "", fmt.Errorf("rendered empty Slack group name for slug %q", slug)
+	}
+	return out, nil
+}
+
+func appendSchedule(schedules []Schedule, scheduleID, currentGroupName, allGroupName string) []Schedule {
 	newScheduleList := make([]Schedule, len(schedules))
 	updated := false
 
