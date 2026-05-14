@@ -66,7 +66,7 @@ func NewConfigFromEnv() (*Config, error) {
 		PagerDutyToken:             os.Getenv(pagerDutyTokenKey),
 		SlackToken:                 os.Getenv(slackTokenKey),
 		RunIntervalInSeconds:       runIntervalDefault,
-		AggregateCurrentSlackGroup: strings.TrimSpace(os.Getenv(slackAggregateCurrentGroupKey)),
+		AggregateCurrentSlackGroup: normalizeScheduleSlug(os.Getenv(slackAggregateCurrentGroupKey)),
 	}
 
 	runInterval := os.Getenv(runInterval)
@@ -94,7 +94,7 @@ func NewConfigFromEnv() (*Config, error) {
 				return nil, fmt.Errorf("expecting schedule value to be a comma separated scheduleId,name but got %s", value)
 			}
 
-			slug := strings.TrimSpace(scheduleValues[1])
+			slug := normalizeScheduleSlug(scheduleValues[1])
 			if slug == "" {
 				return nil, fmt.Errorf("schedule slug must not be empty in %s", value)
 			}
@@ -154,6 +154,12 @@ func renderGroupName(t *template.Template, slug string) (string, error) {
 		return "", fmt.Errorf("rendered empty Slack group name for slug %q", slug)
 	}
 	return out, nil
+}
+
+// normalizeScheduleSlug trims whitespace and common stray quotes from secret managers / copy-paste.
+func normalizeScheduleSlug(s string) string {
+	s = strings.TrimSpace(s)
+	return strings.Trim(s, `'"`)
 }
 
 func appendSchedule(schedules []Schedule, scheduleID, currentGroupName, allGroupName string) []Schedule {

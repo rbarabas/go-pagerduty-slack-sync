@@ -71,9 +71,14 @@ func (s *slackClient) findUserIDByEmail(email string) *string {
 }
 
 func (s *slackClient) findUserGroupByName(name string) *slack.UserGroup {
-	for _, g := range s.userGroups {
+	for i := range s.userGroups {
+		g := &s.userGroups[i]
 		if strings.EqualFold(name, g.Name) {
-			return &g
+			return g
+		}
+		// Handles drive @mentions; display Name often differs from Handle for admin-created groups.
+		if g.Handle != "" && strings.EqualFold(name, g.Handle) {
+			return g
 		}
 	}
 	return nil
