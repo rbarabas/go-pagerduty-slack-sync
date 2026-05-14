@@ -155,6 +155,73 @@ func Test_NewConfigFromEnv_InvalidScheduleData(t *testing.T) {
 	assert.Nil(t, config)
 }
 
+func Test_NewConfigFromEnv_CustomSlackGroupTemplates(t *testing.T) {
+	defer SetEnv("PAGERDUTY_TOKEN", "token1")()
+	defer SetEnv("SLACK_TOKEN", "secretToken1")()
+	defer SetEnv("SLACK_CURRENT_GROUP_TEMPLATE", "{{.Slug}}-oncall")()
+	defer SetEnv("SLACK_ALL_GROUP_TEMPLATE", "{{.Slug}}-oncall-all")()
+	defer SetEnv("SCHEDULE_US", "pd-us,us")()
+	defer SetEnv("SCHEDULE_EU", "pd-eu,eu")()
+
+	config, err := NewConfigFromEnv()
+
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(config.Schedules))
+	assert.Empty(t, config.AggregateCurrentSlackGroup)
+
+	got := map[string]Schedule{}
+	for _, s := range config.Schedules {
+		got[s.CurrentOnCallGroupName] = s
+	}
+	assert.Equal(t, Schedule{
+		ScheduleIDs:            []string{"pd-us"},
+		AllOnCallGroupName:     "us-oncall-all",
+		CurrentOnCallGroupName: "us-oncall",
+	}, got["us-oncall"])
+	assert.Equal(t, Schedule{
+		ScheduleIDs:            []string{"pd-eu"},
+		AllOnCallGroupName:     "eu-oncall-all",
+		CurrentOnCallGroupName: "eu-oncall",
+	}, got["eu-oncall"])
+}
+
+func Test_NewConfigFromEnv_AggregateCurrentSlackGroup(t *testing.T) {
+	defer SetEnv("PAGERDUTY_TOKEN", "token1")()
+	defer SetEnv("SLACK_TOKEN", "secretToken1")()
+	defer SetEnv("SLACK_AGGREGATE_CURRENT_GROUP", "oncall")()
+	defer SetEnv("SCHEDULE_PLATFORM", "1234,platform-engineer")()
+
+	config, err := NewConfigFromEnv()
+
+	assert.NoError(t, err)
+	assert.Equal(t, "oncall", config.AggregateCurrentSlackGroup)
+}
+
+func Test_NewConfigFromEnv_InvalidSlackGroupTemplate(t *testing.T) {
+	defer SetEnv("PAGERDUTY_TOKEN", "token1")()
+	defer SetEnv("SLACK_TOKEN", "secretToken1")()
+	defer SetEnv("SLACK_CURRENT_GROUP_TEMPLATE", "{{.Slug")()
+	defer SetEnv("SCHEDULE_PLATFORM", "1234,platform-engineer")()
+
+	config, err := NewConfigFromEnv()
+
+	assert.Nil(t, config)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), slackCurrentGroupTemplateKey)
+}
+
+func Test_NewConfigFromEnv_EmptyScheduleSlug(t *testing.T) {
+	defer SetEnv("PAGERDUTY_TOKEN", "token1")()
+	defer SetEnv("SLACK_TOKEN", "secretToken1")()
+	defer SetEnv("SCHEDULE_PLATFORM", "1234, ")()
+
+	config, err := NewConfigFromEnv()
+
+	assert.Nil(t, config)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "slug must not be empty")
+}
+
 func SetEnv(key, value string) func() {
 	_ = os.Setenv(key, value)
 	return func() {

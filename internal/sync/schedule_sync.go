@@ -57,6 +57,8 @@ func Schedules(config *Config) error {
 		return emails, nil
 	}
 
+	var aggregateCurrentEmails []string
+
 	for _, schedule := range config.Schedules {
 		logrus.Infof("checking slack group: %s", schedule.CurrentOnCallGroupName)
 
@@ -64,6 +66,10 @@ func Schedules(config *Config) error {
 		if err != nil {
 			logrus.Errorf("failed to get emails for %s: %v", schedule.CurrentOnCallGroupName, err)
 			continue
+		}
+
+		if config.AggregateCurrentSlackGroup != "" {
+			aggregateCurrentEmails = appendIfMissing(aggregateCurrentEmails, currentOncallEngineerEmails...)
 		}
 
 		err = updateSlackGroup(currentOncallEngineerEmails, schedule.CurrentOnCallGroupName)
@@ -84,6 +90,13 @@ func Schedules(config *Config) error {
 		if err != nil {
 			logrus.Errorf("failed to update slack group %s: %v", schedule.AllOnCallGroupName, err)
 			continue
+		}
+	}
+
+	if config.AggregateCurrentSlackGroup != "" {
+		logrus.Infof("checking slack group: %s", config.AggregateCurrentSlackGroup)
+		if err := updateSlackGroup(aggregateCurrentEmails, config.AggregateCurrentSlackGroup); err != nil {
+			logrus.Errorf("failed to update slack group %s: %v", config.AggregateCurrentSlackGroup, err)
 		}
 	}
 
